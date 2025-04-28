@@ -1,0 +1,31 @@
+# 환경변수 파일
+.env*
+.env/
+
+# Python 캐시 파일
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# DB 파일
+*.db
+*.sqlite3
+
+# 가상환경
+venv/
+env/
+
+# 빌드/배포 파일
+build/
+dist/
+*.egg-info/
+*.log
+
+# IDE 설정파일
+.vscode/
+.idea/
+
+# 운영체제 자동 생성 파일
+.DS_Store
+Thumbs.db
