@@ -1,21 +1,21 @@
-from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
-
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import sessionmaker, declarative_base  # ✅ 수정: declarative_base 위치 변경
 from settings import DATABASE_URL
 
-engine = create_engine(
-    DATABASE_URL,
-    connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
-)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+# ✅ PostgreSQL 비동기 엔진 생성
+engine = create_async_engine(DATABASE_URL, echo=True)
 
+# ✅ 세션 팩토리
+AsyncSessionLocal = sessionmaker(
+    bind=engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+)
+
+# ✅ Base 클래스 (Alembic에서 인식 가능)
 Base = declarative_base()
 
-# ✅ DB 세션 디펜던시 함수
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+# ✅ DB 세션 의존성 (FastAPI에서 Depends로 사용 가능)
+async def get_db():
+    async with AsyncSessionLocal() as session:
+        yield session
