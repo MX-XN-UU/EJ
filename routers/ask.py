@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Header, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
 from database import get_db
 from utils import decode_access_token
 import models
@@ -18,9 +19,8 @@ class AskRequest(BaseModel):
 async def ask(
     req: AskRequest,
     authorization: str = Header(...),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
-    # ✅ 토큰 인증
     token = authorization.replace("Bearer ", "")
     decoded = decode_access_token(token)
 
@@ -28,23 +28,27 @@ async def ask(
         raise HTTPException(status_code=401, detail="인증 실패")
 
     email = decoded.get("sub")
-    user = db.query(models.User).filter(models.User.email == email).first()
+    result = await db.execute(select(models.User).where(models.User.email == email))
+    user = result.scalar_one_or_none()
+
     if not user:
         raise HTTPException(status_code=404, detail="사용자 없음")
 
-    # ✅ 최근 질문 3개 불러오기
-    recent_questions = db.query(models.Question)\
-        .filter(models.Question.user_id == user.id)\
-        .order_by(models.Question.timestamp.desc())\
-        .limit(3)\
-        .all()
+    # 최근 질문 3개 불러오기
+    result = await db.execute(
+        select(models.Question)
+        .where(models.Question.user_id == user.id)
+        .order_by(models.Question.timestamp.desc())
+        .limit(3)
+    )
+    recent_questions = result.scalars().all()
 
     history = []
     for q in reversed(recent_questions):
         history.append({"role": "user", "content": q.question})
         history.append({"role": "assistant", "content": q.answer})
 
-    # ✅ 시스템 메시지 및 현재 질문 추가
+    # 시스템 메시지
     if req.is_paid_user:
         history.insert(0, {"role": "system", "content": """
 이 GPT는 한국어로 대화합니다.
@@ -84,9 +88,6 @@ async def ask(
 어려운 법률 용어 대신 쉬운 표현을 사용합니다.
 필요한 경우 관련 기관 안내 및 신고 방법을 제공합니다.
 
-이 GPT는 위험한 선택지가 감지될 경우 경고 메시지를 표시하며,
-법적 문제가 있는 경우 공식적인 해결 기관을 안내합니다.
-
 답변 형식은 다음과 같습니다:
 1. 질문이 네/아니요로 대답 가능한 경우 → 반드시 "네" 또는 "아니요"로 대답합니다.
 2. 질문이 네/아니요로 대답하기 어려운 경우 → 한 문장 또는 단어로 간단하게 대답합니다.
@@ -94,7 +95,7 @@ async def ask(
 
     history.append({"role": "user", "content": req.question})
 
-    # ✅ OpenAI 클라이언트 생성
+    # OpenAI 호출
     openai_key = os.getenv("OPENAI_API_KEY", "").strip().replace('"', "")
     if not openai_key:
         raise HTTPException(status_code=500, detail="OpenAI API 키가 없습니다.")
@@ -111,7 +112,7 @@ async def ask(
         print("❌ GPT 호출 실패:", e)
         raise HTTPException(status_code=500, detail="GPT 응답 실패")
 
-    # ✅ 히스토리 저장 여부 확인
+    # 히스토리 저장
     if req.save_history:
         new_q = models.Question(
             user_id=user.id,
@@ -119,6 +120,6 @@ async def ask(
             answer=answer
         )
         db.add(new_q)
-        db.commit()
+        await db.commit()
 
     return {"answer": answer}

@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, Header
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+from datetime import datetime
 from database import get_db
 from utils import decode_access_token
 import models
-from datetime import datetime
 from pydantic import BaseModel
 
 router = APIRouter()
@@ -12,16 +13,16 @@ router = APIRouter()
 class QuestionCreate(BaseModel):
     question: str
     answer: str
-    save_history: bool = True  # ✅ 기본값 true, 프론트에서 비활성화할 수 있음
+    save_history: bool = True
 
 # ✅ 질문 저장 API
 @router.post("/questions")
-def save_question(
+async def save_question(
     payload: QuestionCreate,
     authorization: str = Header(...),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
-    print("📥 save_history 값:", payload.save_history)  # ✅ 로그 추가
+    print("📥 save_history 값:", payload.save_history)
 
     token = authorization.replace("Bearer ", "")
     decoded = decode_access_token(token)
@@ -30,13 +31,14 @@ def save_question(
         raise HTTPException(status_code=401, detail="유효하지 않은 토큰입니다.")
 
     email = decoded.get("sub")
-    user = db.query(models.User).filter(models.User.email == email).first()
+    result = await db.execute(select(models.User).where(models.User.email == email))
+    user = result.scalar_one_or_none()
 
     if not user:
         raise HTTPException(status_code=404, detail="사용자 없음")
 
     if not payload.save_history:
-        print("❌ 질문 저장 생략됨 (save_history = False)")  # ✅ 저장 생략 로그
+        print("❌ 질문 저장 생략됨 (save_history = False)")
         return {"message": "저장 생략됨"}
 
     new_q = models.Question(
@@ -45,18 +47,16 @@ def save_question(
         answer=payload.answer,
         timestamp=datetime.utcnow()
     )
-
     db.add(new_q)
-    db.commit()
-
+    await db.commit()
     print("✅ 질문이 정상 저장되었습니다.")
     return {"message": "질문 저장 완료!"}
 
 # ✅ 질문 불러오기 API
 @router.get("/questions")
-def get_questions(
+async def get_questions(
     authorization: str = Header(...),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     token = authorization.replace("Bearer ", "")
     decoded = decode_access_token(token)
@@ -65,17 +65,18 @@ def get_questions(
         raise HTTPException(status_code=401, detail="유효하지 않은 토큰입니다.")
 
     email = decoded.get("sub")
-    user = db.query(models.User).filter(models.User.email == email).first()
+    result = await db.execute(select(models.User).where(models.User.email == email))
+    user = result.scalar_one_or_none()
 
     if not user:
         raise HTTPException(status_code=404, detail="사용자 없음")
 
-    questions = (
-        db.query(models.Question)
-        .filter(models.Question.user_id == user.id)
+    result = await db.execute(
+        select(models.Question)
+        .where(models.Question.user_id == user.id)
         .order_by(models.Question.timestamp.desc())
-        .all()
     )
+    questions = result.scalars().all()
 
     return [
         {
@@ -87,9 +88,9 @@ def get_questions(
 
 # ✅ 질문 전체 삭제 API
 @router.delete("/questions")
-def delete_questions(
+async def delete_questions(
     authorization: str = Header(...),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     token = authorization.replace("Bearer ", "")
     decoded = decode_access_token(token)
@@ -98,21 +99,24 @@ def delete_questions(
         raise HTTPException(status_code=401, detail="유효하지 않은 토큰입니다.")
 
     email = decoded.get("sub")
-    user = db.query(models.User).filter(models.User.email == email).first()
+    result = await db.execute(select(models.User).where(models.User.email == email))
+    user = result.scalar_one_or_none()
 
     if not user:
         raise HTTPException(status_code=404, detail="사용자 없음")
 
-    deleted_count = db.query(models.Question).filter(models.Question.user_id == user.id).delete()
-    db.commit()
+    await db.execute(
+        models.Question.__table__.delete().where(models.Question.user_id == user.id)
+    )
+    await db.commit()
 
-    return {"message": f"{deleted_count}개 질문 삭제 완료!"}
+    return {"message": "질문이 모두 삭제되었습니다."}
 
 # ✅ 오늘 질문한 횟수 조회 API
 @router.get("/questions/count")
-def get_today_question_count(
+async def get_today_question_count(
     authorization: str = Header(...),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     token = authorization.replace("Bearer ", "")
     decoded = decode_access_token(token)
@@ -121,16 +125,21 @@ def get_today_question_count(
         raise HTTPException(status_code=401, detail="유효하지 않은 토큰입니다.")
 
     email = decoded.get("sub")
-    user = db.query(models.User).filter(models.User.email == email).first()
+    result = await db.execute(select(models.User).where(models.User.email == email))
+    user = result.scalar_one_or_none()
 
     if not user:
         raise HTTPException(status_code=404, detail="사용자 없음")
 
     today = datetime.utcnow().date()
 
-    count = db.query(models.Question).filter(
-        models.Question.user_id == user.id,
-        models.Question.timestamp >= today
-    ).count()
+    result = await db.execute(
+        select(models.Question)
+        .where(
+            models.Question.user_id == user.id,
+            models.Question.timestamp >= today
+        )
+    )
+    questions_today = result.scalars().all()
 
-    return {"count": count}
+    return {"count": len(questions_today)}
