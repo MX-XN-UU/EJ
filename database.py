@@ -1,6 +1,9 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker, declarative_base  # ✅ 수정: declarative_base 위치 변경
-from settings import DATABASE_URL
+from sqlalchemy.orm import sessionmaker, declarative_base
+import os
+
+# ✅ PostgreSQL 비동기 드라이버 강제 적용
+DATABASE_URL = os.getenv("DATABASE_URL", "").replace("postgresql://", "postgresql+asyncpg://")
 
 # ✅ PostgreSQL 비동기 엔진 생성
 engine = create_async_engine(DATABASE_URL, echo=True)

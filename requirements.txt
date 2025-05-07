@@ -8,4 +8,3 @@ openai
 python-multipart
 python-dotenv
 asyncpg
-psycopg2-binary

@@ -49,7 +49,7 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 # ✅ 현재 사용자 불러오기 (비동기 DB 사용)
-async def get_current_user(db: AsyncSession = Depends(get_db), token: str = Depends(oauth2_scheme)):
+async def get_current_user(db: AsyncSession = Depend(get_db), token: str = Depends(oauth2_scheme)):
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_email = payload.get("sub")
@@ -63,6 +63,7 @@ async def get_current_user(db: AsyncSession = Depends(get_db), token: str = Depe
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
     return user
+
 
 class PasswordChangeRequest(BaseModel):
     current_password: str
@@ -82,3 +83,16 @@ async def change_password(
     await db.commit()
     await db.refresh(current_user)
     return {"message": "비밀번호가 변경되었습니다."}
+
+
+# ✅ DB 테이블 자동 생성
+from database import Base, engine
+import asyncio
+
+async def init_models():
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+@app.on_event("startup")
+async def on_startup():
+    await init_models()
