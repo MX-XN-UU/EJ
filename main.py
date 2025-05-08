@@ -1,5 +1,7 @@
 import sys
 import io
+import subprocess  # ✅ Alembic 실행을 위한 모듈 추가
+
 sys.stdout = io.TextIOWrapper(sys.stdout.detach(), encoding='utf-8')
 
 from fastapi import FastAPI, Depends, HTTPException, status
@@ -47,8 +49,7 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-
-# ✅ 현재 사용자 불러오기 (비동기 DB 사용)
+# ✅ 현재 사용자 불러오기
 async def get_current_user(db: AsyncSession = Depends(get_db), token: str = Depends(oauth2_scheme)):
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
@@ -64,7 +65,6 @@ async def get_current_user(db: AsyncSession = Depends(get_db), token: str = Depe
         raise HTTPException(status_code=404, detail="User not found")
     return user
 
-
 class PasswordChangeRequest(BaseModel):
     current_password: str
     new_password: str
@@ -77,13 +77,11 @@ async def change_password(
 ):
     if not pwd_context.verify(data.current_password, current_user.password):
         raise HTTPException(status_code=400, detail="비밀번호가 틀렸습니다.")
-
     current_user.password = pwd_context.hash(data.new_password)
     db.add(current_user)
     await db.commit()
     await db.refresh(current_user)
     return {"message": "비밀번호가 변경되었습니다."}
-
 
 # ✅ DB 테이블 자동 생성
 from database import Base, engine
@@ -96,3 +94,10 @@ async def init_models():
 @app.on_event("startup")
 async def on_startup():
     await init_models()
+
+    # ✅ Alembic 자동 마이그레이션 실행
+    try:
+        subprocess.run(["alembic", "upgrade", "head"], check=True)
+        print("✅ Alembic 마이그레이션 완료")
+    except Exception as e:
+        print(f"❌ Alembic 실행 실패: {e}")
