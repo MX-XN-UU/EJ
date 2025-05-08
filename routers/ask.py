@@ -7,7 +7,7 @@ from utils import (
     decode_access_token,
     is_malicious_input,
     is_dangerous_response,
-    jaccard_similarity  # ✅ 유사 질문 감지 함수
+    jaccard_similarity
 )
 import models
 import os
@@ -15,7 +15,6 @@ from openai import OpenAI
 import logging
 
 logger = logging.getLogger("risk_monitor")
-
 router = APIRouter()
 
 class AskRequest(BaseModel):
@@ -42,10 +41,14 @@ async def ask(
     if not user:
         raise HTTPException(status_code=404, detail="사용자 없음")
 
-    # ✅ 질문 필터링: 악의적 질문 차단
+    # ✅ 악의적 질문 차단 → 200 OK + blocked: true
     if is_malicious_input(req.question):
         logger.warning(f"[악성 질문 차단] user={email} question='{req.question}'")
-        raise HTTPException(status_code=400, detail="위험하거나 부적절한 질문입니다.")
+        return {
+            "blocked": True,
+            "answer": None,
+            "reason": "이 질문은 시스템 정책에 따라 차단되었습니다."
+        }
 
     # 최근 질문 3개 불러오기
     result = await db.execute(
@@ -118,7 +121,6 @@ async def ask(
 
     history.append({"role": "user", "content": req.question})
 
-    # OpenAI 호출
     openai_key = os.getenv("OPENAI_API_KEY", "").strip().replace('"', "")
     if not openai_key:
         raise HTTPException(status_code=500, detail="OpenAI API 키가 없습니다.")
@@ -132,13 +134,17 @@ async def ask(
         )
         answer = response.choices[0].message.content.strip()
     except Exception as e:
-        print("❌ GPT 호출 실패:", e)
+        logger.error("❌ GPT 호출 실패: %s", e)
         raise HTTPException(status_code=500, detail="GPT 응답 실패")
 
-    # ✅ 응답 필터링
+    # ✅ 위험 응답 차단 → 200 OK + blocked: true
     if is_dangerous_response(answer):
         logger.warning(f"[위험 응답 차단] user={email} question='{req.question}' answer='{answer}'")
-        raise HTTPException(status_code=500, detail="응답에 부적절한 내용이 포함되어 차단되었습니다.")
+        return {
+            "blocked": True,
+            "answer": None,
+            "reason": "이 질문에 대한 응답은 부적절한 내용이 포함되어 차단되었습니다."
+        }
 
     # ✅ DB 저장
     if req.save_history:
@@ -146,9 +152,12 @@ async def ask(
             user_id=user.id,
             question=req.question,
             answer=answer,
-            is_risky=is_malicious_input(req.question)  # ✅ 위험 여부 저장
+            is_risky=is_malicious_input(req.question)
         )
         db.add(new_q)
         await db.commit()
 
-    return {"answer": answer}
+    return {
+        "blocked": False,
+        "answer": answer
+    }
