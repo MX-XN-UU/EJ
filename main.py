@@ -1,6 +1,7 @@
 import sys
 import io
-import subprocess  # ✅ Alembic 실행을 위한 모듈 추가
+import subprocess
+from sqlalchemy import text  # ✅ 추가
 
 sys.stdout = io.TextIOWrapper(sys.stdout.detach(), encoding='utf-8')
 
@@ -26,6 +27,8 @@ from database import get_db
 from routers import auth, user, question, ask
 from routers.admin import router as admin_router
 from models import User
+from database import Base, engine
+import asyncio
 
 app = FastAPI(debug=DEBUG, default_response_class=JSONResponse)
 
@@ -49,6 +52,7 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+
 # ✅ 현재 사용자 불러오기
 async def get_current_user(db: AsyncSession = Depends(get_db), token: str = Depends(oauth2_scheme)):
     try:
@@ -65,9 +69,11 @@ async def get_current_user(db: AsyncSession = Depends(get_db), token: str = Depe
         raise HTTPException(status_code=404, detail="User not found")
     return user
 
+
 class PasswordChangeRequest(BaseModel):
     current_password: str
     new_password: str
+
 
 @app.put("/change-password")
 async def change_password(
@@ -77,27 +83,28 @@ async def change_password(
 ):
     if not pwd_context.verify(data.current_password, current_user.password):
         raise HTTPException(status_code=400, detail="비밀번호가 틀렸습니다.")
+
     current_user.password = pwd_context.hash(data.new_password)
     db.add(current_user)
     await db.commit()
     await db.refresh(current_user)
     return {"message": "비밀번호가 변경되었습니다."}
 
-# ✅ DB 테이블 자동 생성
-from database import Base, engine
-import asyncio
 
+# ✅ DB 테이블 자동 생성 + 마이그레이션 보정
 async def init_models():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # ✅ is_risky 컬럼 수동 추가 (존재하지 않을 경우만)
+        try:
+            await conn.execute(text(
+                "ALTER TABLE questions ADD COLUMN IF NOT EXISTS is_risky BOOLEAN DEFAULT FALSE"
+            ))
+            print("✅ is_risky 컬럼 보정 완료")
+        except Exception as e:
+            print(f"❌ is_risky 컬럼 보정 실패: {e}")
+
 
 @app.on_event("startup")
 async def on_startup():
     await init_models()
-
-    # ✅ Alembic 자동 마이그레이션 실행
-    try:
-        subprocess.run(["alembic", "upgrade", "head"], check=True)
-        print("✅ Alembic 마이그레이션 완료")
-    except Exception as e:
-        print(f"❌ Alembic 실행 실패: {e}")
