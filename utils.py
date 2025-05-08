@@ -30,3 +30,28 @@ def decode_access_token(token: str) -> dict | None:
         return payload
     except JWTError:
         return None
+
+# 🚨 질문 필터링 유틸 - 악의적 질문 차단용
+def is_malicious_input(text: str) -> bool:
+    blacklist = [
+        "죽이고", "죽여", "죽일까", "자살", "살인", "폭탄", "칼로", "휘두르",
+        "폭력", "성폭행", "테러", "총기", "불태워", "납치", "강간", "공격"
+    ]
+    return any(keyword in text.lower() for keyword in blacklist)
+
+# 🚨 응답 필터링 유틸 - 위험한 GPT 응답 차단용
+def is_dangerous_response(text: str) -> bool:
+    flagged_terms = [
+        "휘두르세요", "공격하세요", "죽이세요", "칼로", "망치를 들고", "물리적으로 대응",
+        "직접 해결", "상대를 해치세요", "복수하세요", "혼내주세요"
+    ]
+    return any(term in text.lower() for term in flagged_terms)
+
+# 🚨 유사 질문 감지 유틸 - 반복 유도 질문 방지용
+def jaccard_similarity(a: str, b: str) -> float:
+    a_set = set(a.lower().split())
+    b_set = set(b.lower().split())
+    intersection = a_set.intersection(b_set)
+    union = a_set.union(b_set)
+    return len(intersection) / len(union) if union else 0
+

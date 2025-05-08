@@ -3,10 +3,18 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from database import get_db
-from utils import decode_access_token
+from utils import (
+    decode_access_token,
+    is_malicious_input,
+    is_dangerous_response,
+    jaccard_similarity  # ✅ 유사 질문 감지 함수
+)
 import models
 import os
 from openai import OpenAI
+import logging
+
+logger = logging.getLogger("risk_monitor")
 
 router = APIRouter()
 
@@ -34,6 +42,11 @@ async def ask(
     if not user:
         raise HTTPException(status_code=404, detail="사용자 없음")
 
+    # ✅ 질문 필터링: 악의적 질문 차단
+    if is_malicious_input(req.question):
+        logger.warning(f"[악성 질문 차단] user={email} question='{req.question}'")
+        raise HTTPException(status_code=400, detail="위험하거나 부적절한 질문입니다.")
+
     # 최근 질문 3개 불러오기
     result = await db.execute(
         select(models.Question)
@@ -43,12 +56,22 @@ async def ask(
     )
     recent_questions = result.scalars().all()
 
+    # ✅ 유사 질문 반복 여부 감지
+    similar_count = 0
+    threshold = 0.7
+    for q in recent_questions:
+        sim = jaccard_similarity(req.question, q.question)
+        if sim >= threshold:
+            similar_count += 1
+    if similar_count >= 2:
+        logger.warning(f"[유사 질문 반복 감지] user={email} question='{req.question}'")
+
     history = []
     for q in reversed(recent_questions):
         history.append({"role": "user", "content": q.question})
         history.append({"role": "assistant", "content": q.answer})
 
-    # 시스템 메시지
+    # 시스템 메시지 삽입
     if req.is_paid_user:
         history.insert(0, {"role": "system", "content": """
 이 GPT는 한국어로 대화합니다.
@@ -112,12 +135,18 @@ async def ask(
         print("❌ GPT 호출 실패:", e)
         raise HTTPException(status_code=500, detail="GPT 응답 실패")
 
-    # 히스토리 저장
+    # ✅ 응답 필터링
+    if is_dangerous_response(answer):
+        logger.warning(f"[위험 응답 차단] user={email} question='{req.question}' answer='{answer}'")
+        raise HTTPException(status_code=500, detail="응답에 부적절한 내용이 포함되어 차단되었습니다.")
+
+    # ✅ DB 저장
     if req.save_history:
         new_q = models.Question(
             user_id=user.id,
             question=req.question,
-            answer=answer
+            answer=answer,
+            is_risky=is_malicious_input(req.question)  # ✅ 위험 여부 저장
         )
         db.add(new_q)
         await db.commit()

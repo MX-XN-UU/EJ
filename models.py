@@ -12,7 +12,7 @@ class User(Base):
     password = Column(String, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     is_admin = Column(Boolean, default=False)  # ✅ 관리자 여부 추가
-    plan = Column(String, default="free")     # ✅ 플랜 정보 추가
+    plan = Column(String, default="free")      # ✅ 플랜 정보 추가
 
     questions = relationship("Question", back_populates="user")
     settings = relationship("Setting", back_populates="user", uselist=False)
@@ -26,6 +26,7 @@ class Question(Base):
     question = Column(Text, nullable=False)
     answer = Column(Text, nullable=False)
     timestamp = Column(DateTime, default=datetime.utcnow)
+    is_risky = Column(Boolean, default=False)  # ✅ 위험 질문 여부 필드 추가
 
     user = relationship("User", back_populates="questions")
 

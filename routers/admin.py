@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from sqlalchemy import func
 from database import get_db
-from models import User
+from models import User, Question
 from routers.auth import get_current_admin_user
 
 router = APIRouter()
@@ -51,3 +52,53 @@ async def update_plan(
     await db.commit()
 
     return {"message": f"{email}님의 플랜이 {new_plan}으로 변경되었습니다."}
+
+# ✅ 위험 질문만 조회
+@router.get("/admin/risky-questions")
+async def get_risky_questions(
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin_user)
+):
+    result = await db.execute(
+        select(Question).where(Question.is_risky == True).order_by(Question.timestamp.desc())
+    )
+    risky_questions = result.scalars().all()
+
+    return [
+        {
+            "id": q.id,
+            "user_id": q.user_id,
+            "question": q.question,
+            "timestamp": q.timestamp.isoformat()
+        }
+        for q in risky_questions
+    ]
+
+# ✅ 의심 사용자 조회 (위험 질문 ≥ 2개)
+@router.get("/admin/suspicious-users")
+async def get_suspicious_users(
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin_user)
+):
+    result = await db.execute(
+        select(User, func.count(Question.id))
+        .join(Question, User.id == Question.user_id)
+        .where(Question.is_risky == True)
+        .group_by(User.id)
+        .having(func.count(Question.id) >= 2)
+        .order_by(func.count(Question.id).desc())
+    )
+
+    users = result.all()
+
+    return [
+        {
+            "user_id": u.id,
+            "id_name": u.id_name,
+            "email": u.email,
+            "plan": u.plan,
+            "created_at": u.created_at,
+            "risky_question_count": count
+        }
+        for u, count in users
+    ]
