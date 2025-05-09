@@ -102,3 +102,21 @@ async def get_suspicious_users(
         }
         for u, count in users
     ]
+
+# ✅ 사용자 삭제
+@router.delete("/admin/user")
+async def delete_user_by_email(
+    email: str,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin_user)
+):
+    result = await db.execute(select(User).where(User.email == email))
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="해당 사용자를 찾을 수 없습니다.")
+
+    await db.delete(user)
+    await db.commit()
+
+    return {"message": f"{email} 계정이 삭제되었습니다."}
