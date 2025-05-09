@@ -34,7 +34,7 @@ async def get_me(authorization: str = Header(...), db: AsyncSession = Depends(ge
 
 
 # ✅ 회원 탈퇴
-@router.delete("/users/delete")
+@router.delete("/delete")
 async def delete_user(authorization: str = Header(...), db: AsyncSession = Depends(get_db)):
     token = authorization.replace("Bearer ", "")
     payload = decode_access_token(token)
